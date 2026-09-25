@@ -107,3 +107,28 @@ def test_same_coin_rejected():
         "amount_to": "1",
     }
     assert normalize_offer(offer, _registry(), QP) is None
+
+
+def test_summary_side_vwaps_and_maker_count():
+    from orderbook_api.orderbook import MarketBook
+
+    def offer(oid, give, want, a_from, a_to, addr):
+        return normalize_offer(
+            {
+                "offer_id": oid, "coin_from": give, "coin_to": want,
+                "amount_from": a_from, "amount_to": a_to, "min_bid_amount": "0",
+                "created_at": 1, "expire_at": 2, "swap_type": 3, "addr_from": addr,
+            },
+            _registry(), QP,
+        )
+
+    book = MarketBook("XMR/BTC", "XMR", "BTC")
+    book.add(offer("a1", "Monero", "Bitcoin", "10", "0.05", "m1"))  # ask 10 XMR @ 0.005
+    book.add(offer("a2", "Monero", "Bitcoin", "10", "0.07", "m2"))  # ask 10 XMR @ 0.007
+    book.add(offer("b1", "Bitcoin", "Monero", "0.004", "1", "m1"))  # bid 1 XMR @ 0.004
+    s = book.summary()
+    assert Decimal(s["ask_vwap"]) == Decimal("0.006")
+    assert Decimal(s["bid_vwap"]) == Decimal("0.004")
+    assert s["maker_count"] == 2
+
+    assert MarketBook("PART/BTC", "PART", "BTC").summary()["bid_vwap"] is None

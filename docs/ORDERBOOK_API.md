@@ -130,13 +130,15 @@ Alias of `GET /v1/orderbook`. Returns a summary per market (no depth ladder).
       "best_bid": "0.04", "best_ask": "0.05", "mid": "0.045",
       "spread": "0.01", "spread_pct": "22.2222",
       "bid_count": 1, "ask_count": 1,
-      "total_bid_base": "10", "total_ask_base": "10"
+      "total_bid_base": "10", "total_ask_base": "10",
+      "bid_vwap": "0.04", "ask_vwap": "0.05", "maker_count": 2
     }
   ]
 }
 ```
-Any of `best_bid`, `best_ask`, `mid`, `spread`, `spread_pct` may be `null` when
-that side of the market is empty.
+Any of `best_bid`, `best_ask`, `mid`, `spread`, `spread_pct`, `bid_vwap`, `ask_vwap` may be `null`
+when that side of the market is empty. `bid_vwap`/`ask_vwap` are the base-amount-weighted average
+prices of each side; `maker_count` is the number of distinct maker addresses with an offer in the market.
 
 ### `GET /v1/orderbook` — all markets with summaries
 Same shape as `/v1/markets`.

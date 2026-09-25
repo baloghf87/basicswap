@@ -39,6 +39,14 @@ def _aggregate_levels(
     return levels
 
 
+def _vwap(offers: list[OfferEntry]) -> Optional[str]:
+    """Size-weighted (base amount) average price of one book side; None when the side is empty."""
+    size = sum((o.base_amount for o in offers), Decimal(0))
+    if size <= 0:
+        return None
+    return _dstr(sum((o.price * o.base_amount for o in offers), Decimal(0)) / size)
+
+
 class MarketBook:
     def __init__(self, market: str, base: str, quote: str) -> None:
         self.market = market
@@ -80,6 +88,9 @@ class MarketBook:
             "ask_count": len(self.asks),
             "total_bid_base": _dstr(sum((o.base_amount for o in self.bids), Decimal(0))),
             "total_ask_base": _dstr(sum((o.base_amount for o in self.asks), Decimal(0))),
+            "bid_vwap": _vwap(self.bids),
+            "ask_vwap": _vwap(self.asks),
+            "maker_count": len({o.maker_addr for o in self.bids + self.asks if o.maker_addr}),
         }
 
     def to_dict(self, depth: Optional[int] = None) -> dict[str, Any]:
