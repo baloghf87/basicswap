@@ -1,0 +1,117 @@
+# Kubernetes manifests for the BasicSwap order-book API (Option A).
+#
+# One StatefulSet pod runs a listen-only BasicSwap node (Particl only) together
+# with the order-book adapter, backed by a PersistentVolumeClaim that holds the
+# Particl chain, wallet, and SQLite DB. Only the adapter API (:8080) is exposed;
+# the node's own ports (12700/11700) and Particl RPC/ZMQ stay pod-internal.
+#
+# Image: build `basicswap-orderbook:latest` per orderbook_api/Dockerfile and push
+# it to a registry your cluster can pull, then set `image:` below.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: orderbook-api-config
+  labels: { app: orderbook-api }
+data:
+  # Adapter tunables (see orderbook_api/config.py).
+  POLL_INTERVAL_SECONDS: "30"
+  OFFER_PAGE_LIMIT: "1000"
+  LOG_LEVEL: "INFO"
+  ADAPTER_PORT: "8080"
+---
+# OPTIONAL: only needed if you run the PART wallet encrypted. For a pure
+# listen-only node you can leave the wallet unencrypted and delete this Secret
+# plus the two env entries that reference it.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: orderbook-api-secrets
+  labels: { app: orderbook-api }
+type: Opaque
+stringData:
+  # Set both to the same value if you encrypt the wallet; the adapter uses
+  # BSX_UNLOCK_PASSWORD to auto-unlock the node so it can serve offers.
+  WALLET_ENCRYPTION_PWD: ""
+  BSX_UNLOCK_PASSWORD: ""
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: orderbook-api
+  labels: { app: orderbook-api }
+spec:
+  selector: { app: orderbook-api }
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: orderbook-api
+  labels: { app: orderbook-api }
+spec:
+  serviceName: orderbook-api
+  replicas: 1  # Each replica is an independent observer; 1 is sufficient.
+  selector:
+    matchLabels: { app: orderbook-api }
+  template:
+    metadata:
+      labels: { app: orderbook-api }
+    spec:
+      # Particl shutdown can take a while; give it room to flush cleanly.
+      terminationGracePeriodSeconds: 180
+      containers:
+        - name: node-and-adapter
+          image: basicswap-orderbook:latest  # <-- push to your registry & set here
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef: { name: orderbook-api-config }
+          env:
+            - name: BSX_DATADIR
+              value: /coindata
+            - name: WALLET_ENCRYPTION_PWD
+              valueFrom:
+                secretKeyRef: { name: orderbook-api-secrets, key: WALLET_ENCRYPTION_PWD, optional: true }
+            - name: BSX_UNLOCK_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: orderbook-api-secrets, key: BSX_UNLOCK_PASSWORD, optional: true }
+          volumeMounts:
+            - name: coindata
+              mountPath: /coindata
+          # First boot must prepare the node, download particld, and begin the
+          # Particl chain sync before the API is useful — allow generous time.
+          startupProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 10
+            failureThreshold: 180   # up to ~30 min for prepare + node start
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 30
+            failureThreshold: 5
+          readinessProbe:
+            # /ready flips to 200 once the adapter has fetched the order book at
+            # least once (node up, PART wallet unlocked). The book then fills in
+            # as offers arrive over SMSG.
+            httpGet: { path: /ready, port: http }
+            periodSeconds: 15
+            failureThreshold: 4
+          resources:
+            requests: { cpu: "500m", memory: "2Gi" }
+            limits: { cpu: "2", memory: "4Gi" }
+  volumeClaimTemplates:
+    - metadata:
+        name: coindata
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            # Particl runs with txindex and no prune; size for the full chain
+            # plus headroom, and grow over time.
+            storage: 20Gi
