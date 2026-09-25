@@ -77,6 +77,27 @@ BSX_API_URL=http://127.0.0.1:12700 BSX_WS_URL=ws://127.0.0.1:11700 \
 Configuration is entirely via environment variables — see the table in
 `docs/ORDERBOOK_API.md` §7.
 
+## External Tor proxy & mainnet notes (2026-09-25)
+
+- `TOR_PROXY_HOST` (+ `TOR_PROXY_PORT`, default 9050) routes BasicSwap's own HTTP requests and particld's
+  **.onion** peers through an existing SOCKS proxy (e.g. a shared tor in another k8s namespace); the host
+  name is resolved to an IP on every start (particld needs an IP). `TOR_PROXY_MODE=all` proxies every
+  particld connection (much slower initial sync). No onion service is published (listen-only node).
+- **Fixed:** the adapter's WebSocket client sent protocol pings with a random binary payload, which
+  BasicSwap's bundled websocket server decodes as UTF-8 and crashes on (`UnicodeDecodeError`), dropping the
+  connection every 30 s. Client pings are disabled; interval polling covers liveness.
+- **Fixed: a listen-only node saw no offers at all.** BasicSwap drops every offer involving a coin it runs
+  no daemon for (`Ignoring message involving inactive coin XMR, type OFFER`), and this node only runs
+  Particl. New setting `observe_inactive_coin_offers` (set by `run-node-and-adapter.sh`): `ci()` hands out
+  a daemon-less interface for inactive coins (built on a copy of the coin's settings, so the coin never
+  looks active) that is enough to validate and store offers; fee-rate checks, which need the coin's
+  daemon, are skipped for such coins (`isObservedCoin`).
+- **Fixed: particld was killed on every container stop** (no clean shutdown → the next start replayed
+  hundreds of thousands of blocks, and BasicSwap gave up waiting after 15 RPC tries). The run script now
+  stops particld itself and waits for it, and raises `startup_tries` to 60.
+- Verified on mainnet (2026-09-25): particld synced (2.25M blocks); the adapter serves 12 markets incl.
+  XMR/BTC (e.g. best bid 0.00653 / ask 0.00664) and XMR/LTC.
+
 ## Tests
 
 Pure logic (market mapping, price/side derivation) has no dependencies:

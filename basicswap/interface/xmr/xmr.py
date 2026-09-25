@@ -136,7 +136,7 @@ class XMRInterface(CoinInterface):
         # Connect to the daemon over a proxy if not running locally
         if swap_client:
             chain_client_settings = swap_client.getChainClientSettings(self.coin_type())
-            manage_daemon: bool = chain_client_settings["manage_daemon"]
+            manage_daemon: bool = chain_client_settings.get("manage_daemon", False)
             if swap_client.use_tor_proxy:
                 if manage_daemon is False:
                     log_str: str = ""

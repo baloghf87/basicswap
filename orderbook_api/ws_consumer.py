@@ -29,8 +29,11 @@ async def run_ws_consumer(ws_url: str, service) -> None:
     backoff = 1
     while True:
         try:
+            # No client pings: BasicSwap's bundled websocket server decodes ping
+            # payloads as UTF-8 and drops the connection on the random binary
+            # payload `websockets` sends. Interval polling covers liveness.
             async with websockets.connect(
-                ws_url, ping_interval=30, open_timeout=10
+                ws_url, ping_interval=None, open_timeout=10
             ) as ws:
                 log.info("Connected to BasicSwap WebSocket at %s", ws_url)
                 backoff = 1

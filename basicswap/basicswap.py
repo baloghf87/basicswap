@@ -1128,9 +1128,64 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         if use_coinid not in self.coin_clients:
             raise ValueError("Unknown coinid {}".format(int(coin)))
         if interface_ind not in self.coin_clients[use_coinid]:
-            raise InactiveCoin(int(coin))
+            observer_ci = self._observerInterface(use_coinid, interface_ind)
+            if observer_ci is None:
+                raise InactiveCoin(int(coin))
+            return observer_ci
 
         return self.coin_clients[use_coinid][interface_ind]
+
+    def _observerInterface(self, coin, interface_ind: str):
+        """Daemon-less interface of an INACTIVE coin, for offer observation only.
+
+        With the `observe_inactive_coin_offers` setting (a listen-only order-book node) offers for
+        coins without a running daemon are stored instead of dropped as InactiveCoin. Validating and
+        storing an offer only needs the coin's static parameters (decimal places, amount limits,
+        segwit, lock sequences), which the interface class provides without any RPC. The interface
+        is built on a copy of the coin's client settings so the coin never looks active to the rest
+        of the node (no chain polling, no wallet use). Returns None if observation is off or the
+        interface can't be built.
+        """
+        if not self.settings.get("observe_inactive_coin_offers", False):
+            return None
+        if not hasattr(self, "_observer_clients"):
+            self._observer_clients = {}
+        clients = self._observer_clients.get(coin)
+        if clients is None:
+            real = self.coin_clients[coin]
+            clients = dict(real)
+            clients.setdefault("rpcport", 0)
+            clients.setdefault("rpcauth", "")
+            clients.setdefault("connection_type", "none")
+            clients.setdefault("use_tor", False)
+            # XMR/WOW interfaces also build (never used) wallet-RPC clients
+            clients.setdefault("walletrpcport", 0)
+            clients.setdefault("walletrpcauth", None)
+            clients.setdefault("walletrpchost", "127.0.0.1")
+            self.coin_clients[coin] = clients
+            try:
+                interface = self.createInterface(coin)
+            except Exception as e:
+                self.log.warning(f"Cannot observe offers of inactive coin {Coins(coin).name}: {e}")
+                interface = None
+            finally:
+                self.coin_clients[coin] = real
+            # set only after the real settings are back, so no other thread sees the coin as active
+            clients = clients if interface is not None else {}
+            if interface is not None:
+                clients["interface"] = interface
+            self._observer_clients[coin] = clients
+        return clients.get(interface_ind)
+
+    def isObservedCoin(self, coin) -> bool:
+        """True for an inactive coin handled only through an observer interface (see
+        _observerInterface): its offers are recorded, but nothing that needs its daemon is done."""
+        if not self.settings.get("observe_inactive_coin_offers", False):
+            return False
+        try:
+            return not self.isCoinActive(coin)
+        except ValueError:
+            return False
 
     def isBchXmrSwap(self, offer: Offer) -> bool:
         if offer.swap_type != SwapTypes.XMR_SWAP:
@@ -11469,8 +11524,12 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             ensure(len(offer_data.pkhash_seller) == 0, "Unexpected data")
             ensure(len(offer_data.secret_hash) == 0, "Unexpected data")
 
-            ci_from.validateFeeRate(offer_data.fee_rate_from, Concepts.OFFER)
-            ci_to.validateFeeRate(offer_data.fee_rate_to, Concepts.OFFER)
+            # Fee-rate checks need the coin's daemon (fee estimates); an observed coin has none, and
+            # a listen-only node never bids, so the check is skipped for it.
+            if not self.isObservedCoin(coin_from):
+                ci_from.validateFeeRate(offer_data.fee_rate_from, Concepts.OFFER)
+            if not self.isObservedCoin(coin_to):
+                ci_to.validateFeeRate(offer_data.fee_rate_to, Concepts.OFFER)
 
         else:
             raise ValueError(f"Unknown swap type {offer_data.swap_type}.")
