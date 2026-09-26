@@ -63,6 +63,10 @@ class BsxClient:
         """Return the node summary (counts, versions, sync state where present)."""
         return await self._get_json("/json")
 
+    async def get_update_status(self) -> dict[str, Any]:
+        """``/json/updatestatus``: BasicSwap's own GitHub release check (every 4 h)."""
+        return await self._get_json("/json/updatestatus")
+
     async def list_offers_page(
         self, offset: int, limit: int
     ) -> list[dict[str, Any]]:

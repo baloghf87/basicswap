@@ -111,6 +111,7 @@ class OrderBook:
     def __init__(self) -> None:
         self.markets: dict[str, MarketBook] = {}
         self.offer_count: int = 0
+        self.newest_offer_ts: int = 0
 
     @classmethod
     def from_offers(cls, entries: list[OfferEntry]) -> "OrderBook":
@@ -121,11 +122,31 @@ class OrderBook:
                 mb = MarketBook(e.market, e.base, e.quote)
                 ob.markets[e.market] = mb
             mb.add(e)
+            ob.newest_offer_ts = max(ob.newest_offer_ts, e.created_at)
         ob.offer_count = len(entries)
         return ob
 
     def market_summaries(self) -> list[dict[str, Any]]:
         return [self.markets[m].summary() for m in sorted(self.markets)]
+
+
+def network_signals(summary: dict[str, Any], updates: dict[str, Any]) -> dict[str, Any]:
+    """The node's "is this build still accepted / still connected?" signals for ``/v1/status``.
+
+    ``offers_rejected_protocol`` counts offers the core dropped for a protocol version it cannot
+    handle; ``update_available``/``latest_version`` come from BasicSwap's GitHub release check
+    (``latest_version`` is only set while an update is available).
+    """
+    return {
+        "core_version": updates.get("current_version"),
+        "update_available": bool(updates.get("update_available")),
+        "latest_version": updates.get("latest_version"),
+        "offers_rejected_protocol": summary.get("num_offers_rejected_protocol"),
+        "max_rejected_offer_protocol": summary.get("max_rejected_offer_protocol"),
+        "max_supported_offer_protocol": summary.get("max_supported_offer_protocol"),
+        "smsg_messages_received": summary.get("num_smsg_messages_received"),
+        "particl_peers": summary.get("particl_peers"),
+    }
 
 
 class OrderBookService:
@@ -150,6 +171,8 @@ class OrderBookService:
         self.last_error: Optional[str] = None
         self.locked: bool = False
         self._registry_loaded = False
+        # Network signals from the node (/json summary + /json/updatestatus), best effort.
+        self.network: dict[str, Any] = {}
 
     # -- subscriber management (for the WebSocket fan-out) ------------------
     def subscribe(self) -> asyncio.Queue:
@@ -187,6 +210,15 @@ class OrderBookService:
         except Exception as e:  # noqa: BLE001
             log.warning("Could not load coin registry (using fallback): %s", e)
 
+    async def _refresh_network(self) -> None:
+        """Pull the node's network signals; a failure here never fails the book refresh."""
+        try:
+            summary = await self.client.get_summary()
+            updates = await self.client.get_update_status()
+            self.network = network_signals(summary, updates)
+        except Exception as e:  # noqa: BLE001
+            log.warning("Could not read the node's network signals: %s", e)
+
     async def refresh(self) -> bool:
         """Re-fetch all offers and rebuild the book. Returns True on success."""
         async with self._lock:
@@ -205,6 +237,7 @@ class OrderBookService:
                     if entry is not None:
                         entries.append(entry)
                 self.book = OrderBook.from_offers(entries)
+                await self._refresh_network()
                 self.last_refresh_ts = time.time()
                 self.last_refresh_ok = True
                 self.last_error = None
@@ -269,4 +302,10 @@ class OrderBookService:
             "offer_count": self.book.offer_count,
             "market_count": len(self.book.markets),
             "poll_interval_seconds": self.config.poll_interval_seconds,
+            "newest_offer_age_seconds": (
+                round(time.time() - self.book.newest_offer_ts, 1)
+                if self.book.newest_offer_ts
+                else None
+            ),
+            **self.network,
         }

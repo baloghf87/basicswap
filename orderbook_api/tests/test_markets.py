@@ -132,3 +132,34 @@ def test_summary_side_vwaps_and_maker_count():
     assert s["maker_count"] == 2
 
     assert MarketBook("PART/BTC", "PART", "BTC").summary()["bid_vwap"] is None
+
+
+def test_network_signals_and_newest_offer():
+    from orderbook_api.orderbook import OrderBook, network_signals
+
+    def offer(oid, created_at):
+        return normalize_offer(
+            {
+                "offer_id": oid, "coin_from": "Monero", "coin_to": "Bitcoin",
+                "amount_from": "1", "amount_to": "0.005", "min_bid_amount": "0",
+                "created_at": created_at, "expire_at": created_at + 60, "swap_type": 3, "addr_from": "m",
+            },
+            _registry(), QP,
+        )
+
+    assert OrderBook.from_offers([offer("a", 100), offer("b", 250)]).newest_offer_ts == 250
+    assert OrderBook.from_offers([]).newest_offer_ts == 0
+
+    signals = network_signals(
+        {
+            "num_offers_rejected_protocol": 3, "max_rejected_offer_protocol": 11,
+            "max_supported_offer_protocol": 10, "num_smsg_messages_received": 42, "particl_peers": 8,
+        },
+        {"update_available": True, "current_version": "0.18.9", "latest_version": "0.19.0"},
+    )
+    assert signals == {
+        "core_version": "0.18.9", "update_available": True, "latest_version": "0.19.0",
+        "offers_rejected_protocol": 3, "max_rejected_offer_protocol": 11,
+        "max_supported_offer_protocol": 10, "smsg_messages_received": 42, "particl_peers": 8,
+    }
+    assert network_signals({}, {})["update_available"] is False

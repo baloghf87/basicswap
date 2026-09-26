@@ -225,7 +225,7 @@ Base path `/v1`; interactive schema at `/docs`, OpenAPI at `/openapi.json`.
 | Endpoint | Description |
 |----------|-------------|
 | `GET /health`, `GET /ready` | Liveness / readiness probes. |
-| `GET /v1/status` | Adapter + upstream node status (offer count, lock state, last refresh). |
+| `GET /v1/status` | Adapter + upstream node status (offer count, lock state, last refresh, `newest_offer_age_seconds`) and network-health signals: `core_version`, `update_available` / `latest_version` (BasicSwap's GitHub release check), `offers_rejected_protocol` / `max_rejected_offer_protocol` / `max_supported_offer_protocol` (offers dropped for a protocol version this build cannot handle), `smsg_messages_received`, `particl_peers`. |
 | `GET /v1/markets`, `GET /v1/orderbook` | All markets with summary stats (best bid/ask, mid, spread). |
 | `GET /v1/orderbook/{base}/{quote}?depth=N` | Aggregated bid/ask ladder for one market. |
 | `GET /v1/offers?market=&side=` | Raw normalized offers. |

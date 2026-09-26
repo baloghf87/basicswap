@@ -502,6 +502,10 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
         self._last_checked_updates = 0
         self._latest_version = None
         self._update_available = False
+        # Offers dropped for a protocol version we cannot handle: a steady rise means the network
+        # has moved to a protocol this build does not speak (surfaced in getSummary).
+        self.num_offers_rejected_protocol = 0
+        self.max_rejected_offer_protocol = 0
         self._notifications_enabled = self.settings.get("notifications_enabled", True)
         self._disabled_notification_types = self.settings.get(
             "disabled_notification_types", []
@@ -11429,6 +11433,20 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             self.closeDBCursor(bids_cursor)
             self.closeDB(cursor)
 
+    def _countRejectedOfferProtocol(self, offer_data) -> None:
+        self.num_offers_rejected_protocol += 1
+        version = getattr(offer_data, "protocol_version", 0) or 0
+        if isinstance(version, int) and version > self.max_rejected_offer_protocol:
+            self.max_rejected_offer_protocol = version
+
+    def getParticlPeerCount(self):
+        """Connected particld peers (the SMSG transport), or None when unknown."""
+        try:
+            return int(self.ci(Coins.PART).rpc("getconnectioncount"))
+        except Exception as e:  # noqa: BLE001
+            self.log.debug(f"getconnectioncount failed: {e}")
+            return None
+
     def processOffer(self, msg) -> None:
         offer_bytes = self.getSmsgMsgBytes(msg)
 
@@ -11447,10 +11465,12 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
                     getattr(offer_data, "protocol_version", -1)
                 )
             )
+            self._countRejectedOfferProtocol(offer_data)
             return
         try:
             offer_data.from_bytes(offer_bytes)
         except Exception as e:
+            self._countRejectedOfferProtocol(offer_data)
             self.log.warning(
                 "Failed to decode offer, protocol version: {}, {}.".format(
                     getattr(offer_data, "protocol_version", -1), str(e)
@@ -15947,6 +15967,11 @@ class BasicSwap(BaseApp, BSXNetwork, UIApp):
             "num_recv_active_bids": bids_recv_active,
             "num_available_bids": bids_available,
             "num_watched_outputs": num_watched_outputs,
+            "num_smsg_messages_received": getattr(self, "num_smsg_messages_received", 0),
+            "num_offers_rejected_protocol": self.num_offers_rejected_protocol,
+            "max_rejected_offer_protocol": self.max_rejected_offer_protocol,
+            "max_supported_offer_protocol": MAXPROTO_VERSION,
+            "particl_peers": self.getParticlPeerCount(),
         }
         return rv
 
